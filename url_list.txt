@@ -1,0 +1,10 @@
+
+                Welcome to 'some_service'
+                just put in this file youtube url, separate by newline
+                    example:
+                        https://www.youtube.com/watch?v=lwZDVGxJjCw&list=RDCMUCVHOlMtc4e0rrQlJvjjnRmg&start_radio=1
+                        https://music.youtube.com/watch?v=1mBx7w32jRw&list=RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA
+                        https://music.youtube.com/watch?v=bDNuAdjhgmk&list=RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA
+
+                p.s. You should have ffmpeg
+                
