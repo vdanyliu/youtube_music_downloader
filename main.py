@@ -131,7 +131,7 @@ class YouTubeMusicService:
         video_id_with_trash, *trash = path_obj.query.split("&")
         *trash, video_id = video_id_with_trash.split("=")
         video_path, video_title = await self.downloader.adownload_video(self.youtube_link_template.format(video_id))
-        video_title = video_title.replace("\"", "").replace("'", "")
+        video_title = video_title.replace("\"", "").replace("'", "").replace("/", "")
         result = await self.converter.convert_video_to_mp3(str(video_path), str(Path(self.downloader.tmp_dir, video_title)))
         os.remove(str(video_path))
         return result
