@@ -147,7 +147,7 @@ async def amain():
     except Exception as ex:
         LOGGER.exception(ex)
         LOGGER.warning("You have to install \"ffmpeg\"")
-        exit(1)
+        return
 
     service = YouTubeMusicService(
         downloader=YouTubeDownloader(executor=ThreadPoolExecutor()),
