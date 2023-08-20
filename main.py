@@ -1,144 +1,63 @@
 import asyncio
-import functools
+import concurrent.futures
 import logging
-import os
 import subprocess
-import urllib.request
-from concurrent.futures import ThreadPoolExecutor
-from itertools import count
+import sys
+import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import IO
 
-import youtube_dl
+import aiohttp
+from pytube import YouTube
 
-# logging.basicConfig(level=logging.INFO)
-from custom_progress_bar import cpb_bars
-
+tread_pool = concurrent.futures.ThreadPoolExecutor()
+tmp_dir = Path("./tmp")
+tmp_dir.mkdir(exist_ok=True)
 LOGGER = logging.getLogger(__name__)
 
 
-class UrlsSourceParser:
-    def __init__(self, source_path=os.path.join(os.curdir, "url_list.txt")):
-        self.source_path = source_path
+async def convert_video_to_mp3(source: IO, target: str) -> str:
+    cmd = [
+        "ffmpeg",
+        f"-i -" if sys.platform == 'win32' else f"-i /dev/stdin",
+        f"-vn -ac 2 -b:a 192k \"{str(target)}\" -n",
+    ]
+    proc = await asyncio.create_subprocess_shell(
+        cmd=" ".join(cmd),
+        stdin=source.fileno(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
 
-    def parse(self):
-        try:
-            with open(self.source_path, "r") as fd:
-                return [line.strip() for line in fd if "http" in line]
-        except FileNotFoundError:
-            self._first_launch()
+    stdout, stderr = await proc.communicate()
 
-    def _first_launch(self):
-        with open(self.source_path, "w+") as fd:
-            fd.write(
-                '''
-                Welcome to 'some_service'
-                just put in this file youtube url, separate by newline
-                    example:
-                        https://www.youtube.com/watch?v=lwZDVGxJjCw&list=RDCMUCVHOlMtc4e0rrQlJvjjnRmg&start_radio=1
-                        https://music.youtube.com/watch?v=1mBx7w32jRw&list=RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA
-                        https://music.youtube.com/watch?v=bDNuAdjhgmk&list=RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA
-
-                p.s. You should have ffmpeg
-                ''')
-        exit(0)
+    print(f'[{cmd!r} exited with {proc.returncode}]')
+    if stdout:
+        print(f'[stdout]\n{stdout.decode()}')
+    if stderr:
+        print(f'[stderr]\n{stderr.decode()}')
+    return target
 
 
-class YouTubeDownloader:
-    chunk_size = 1
-    tmp_dir = Path('tmp').resolve()
-
-    def __init__(self, executor=None):
-        self.executor = executor
-        self.counter = count(1)
-        self._init_tmp_dirs()
-
-    async def adownload_video(self, url: str) -> tuple[Path, str]:
-        loop = asyncio.get_event_loop()
-        video_path, video_title = await loop.run_in_executor(
-            executor=self.executor, func=functools.partial(self.download_video, url))
-        return video_path, video_title
-
-    def download_video(self, url: str) -> tuple[Path, str]:
-        with youtube_dl.YoutubeDL({'format': 'bestaudio/best'}) as ydl:
-            video_info = ydl.extract_info(url=url, download=False, process=False)
-            video_id, video_title = video_info.get('id'), video_info.get('title')
-            url = self.__get_best_audio_url(video_info)
-            req = urllib.request.Request(url)
-
-            r = urllib.request.urlopen(req)
-            r_content_len = int(r.getheader("Content-Length"))
-            tmp_video_path = Path(self.tmp_dir, video_id)
-            with open(tmp_video_path, "wb+") as fd:
-                with cpb_bars.create_bar(name=video_id, total_amount=r_content_len, ) as bar:
-                    for _ in range(r_content_len):
-                        data = r.read(self.chunk_size)
-                        fd.write(data)
-                        bar.increase(amount=self.chunk_size)
-            if r.read(1):
-                raise ValueError
-
-            return tmp_video_path, video_title
-
-    @staticmethod
-    def __get_best_audio_url(video_info: dict) -> str:
-        selected = None
-        for v_format in video_info.get('formats'):
-            if not selected:
-                selected = v_format
-            else:
-                if v_format.get('abr', 0) > selected.get('abr', 0):
-                    selected = v_format
-        return selected.get('url')
-
-    def _init_tmp_dirs(self):
-        self.tmp_dir.mkdir(parents=True, exist_ok=True)
-
-
-class VideoMusicConverter:
-    async def convert_video_to_mp3(self, source: str, target: str) -> str:
-        cmd = f"ffmpeg -i \"{source}\" -vn -ac 2 -b:a 192k \"{target}.mp3\" -n"
-        LOGGER.warning(cmd)
-        await self._run(cmd)
-        return target
-
-    @staticmethod
-    async def _run(cmd):
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE)
-
-        stdout, stderr = await proc.communicate()
-
-        print(f'[{cmd!r} exited with {proc.returncode}]')
-        if stdout:
-            print(f'[stdout]\n{stdout.decode()}')
-        if stderr:
-            print(f'[stderr]\n{stderr.decode()}')
-
-
-class YouTubeMusicService:
-    youtube_link_template = "https://www.youtube.com/watch?v={}"
-
-    def __init__(self, downloader: YouTubeDownloader, converter: VideoMusicConverter, parser: UrlsSourceParser):
-        self.downloader = downloader
-        self.converter = converter
-        self.parser = parser
-
-    async def run_pipeline(self, url: str) -> str:
-        path_obj = urlparse(url)
-        video_id_with_trash, *trash = path_obj.query.split("&")
-        *trash, video_id = video_id_with_trash.split("=")
-        video_path, video_title = await self.downloader.adownload_video(self.youtube_link_template.format(video_id))
-        video_title = video_title.replace("\"", "").replace("'", "").replace("/", "")
-        result = await self.converter.convert_video_to_mp3(str(video_path), str(Path(self.downloader.tmp_dir, video_title)))
-        os.remove(str(video_path))
-        return result
-
-    def get_urls(self) -> list:
-        urls = self.parser.parse()
-        return urls
+async def get_music_from_url(session: aiohttp.ClientSession, url: str) -> str:
+    loop = asyncio.get_event_loop()
+    youtube_video = await loop.run_in_executor(tread_pool, YouTube, url)
+    title = youtube_video.title
+    title = title.replace("\"", "").replace("'", "").replace("/", "")
+    author = youtube_video.author
+    audio_url = youtube_video.streams.filter(only_audio=True).last().url
+    with tempfile.TemporaryFile(dir=tmp_dir) as tmp_fd:
+        ii = 0
+        async with session.get(audio_url) as r:
+            i = 0
+            while data := await r.content.read(2048):
+                tmp_fd.write(data)
+                i += len(data)
+                if i > ii * 100_000:
+                    print(f"{i}/{r.content_length}-{title}")
+                    ii += 1
+            tmp_fd.seek(0)
+        return await convert_video_to_mp3(tmp_fd, Path(tmp_dir, f"{author}-{title}.mp3"))
 
 
 async def amain():
@@ -148,18 +67,32 @@ async def amain():
         LOGGER.exception(ex)
         LOGGER.warning("You have to install \"ffmpeg\"")
         return
+    source_path = Path("./url_list.txt")
+    if not source_path.exists():
+        with open(source_path, "w+") as fd:
+            fd.write(
+                '''
+                Welcome to 'some_service'
+                just put in this file youtube url, separate by newline
+                    example:
+                        https://www.youtube.com/watch?v=lwZDVGxJjCw&list=RDCMUCVHOlMtc4e0rrQlJvjjnRmg&start_radio=1
+                        https://music.youtube.com/watch?v=1mBx7w32jRw&list=RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA
+                        https://music.youtube.com/watch?v=bDNuAdjhgmk&list=RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA
+    
+                p.s. You should have ffmpeg
+                ''')
+        exit(0)
 
-    service = YouTubeMusicService(
-        downloader=YouTubeDownloader(executor=ThreadPoolExecutor()),
-        converter=VideoMusicConverter(),
-        parser=UrlsSourceParser(),
-    )
-    tasks = [service.run_pipeline(url=url) for url in service.get_urls()]
-    result = await asyncio.gather(*tasks, return_exceptions=False)
-    await asyncio.sleep(1)
-    LOGGER.warning("\n".join(["{} - {}".format(*values) for values in zip(service.get_urls(), result)]))
+    async with aiohttp.ClientSession(raise_for_status=True, timeout=aiohttp.ClientTimeout(total=10 * 60)) as session:
+        with open(source_path) as url_list_fd:
+            urls = [line.rstrip() for line in url_list_fd if "http" in line]
+        print(urls)
+        tasks = []
+        for url in urls:
+            tasks.append(asyncio.create_task(get_music_from_url(session, url)))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        print(results)
 
 
 if __name__ == '__main__':
     asyncio.run(amain())
-    input("Press enter to exit")

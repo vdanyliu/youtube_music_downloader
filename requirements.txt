@@ -1,3 +1,2 @@
-
-windows-curses
-youtube-dl
+pytube
+aiohttp
