@@ -1,6 +1,7 @@
 import asyncio
 import concurrent.futures
 import logging
+import re
 import subprocess
 import sys
 import tempfile
@@ -43,7 +44,8 @@ async def get_music_from_url(session: aiohttp.ClientSession, url: str) -> str:
     loop = asyncio.get_event_loop()
     youtube_video = await loop.run_in_executor(tread_pool, YouTube, url)
     title = youtube_video.title
-    title = title.replace("\"", "").replace("'", "").replace("/", "")
+    title = re.sub(r'[^a-zA-Z0-9]', "_", title)
+    title = re.sub(r'_+', " ", title)
     author = youtube_video.author
     audio_url = youtube_video.streams.filter(only_audio=True).last().url
     with tempfile.TemporaryFile(dir=tmp_dir) as tmp_fd:
